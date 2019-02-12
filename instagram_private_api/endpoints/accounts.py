@@ -21,10 +21,10 @@ except NameError:  # Python 2:
 class AccountsEndpointsMixin(object):
     """For endpoints in ``/accounts/``."""
 
-    def login(self):
+    async def login(self):
         """Login."""
 
-        prelogin_params = self._call_api(
+        prelogin_params = await self._call_api(
             'si/fetch_headers/',
             params='',
             query={'challenge_type': 'signup', 'guid': self.generate_uuid(True)},
@@ -33,7 +33,7 @@ class AccountsEndpointsMixin(object):
         if not self.csrftoken:
             raise ClientError(
                 'Unable to get csrf from prelogin.',
-                error_response=self._read_response(prelogin_params))
+                error_response=await self._read_response(prelogin_params))
 
         login_params = {
             'device_id': self.device_id,
@@ -46,15 +46,14 @@ class AccountsEndpointsMixin(object):
             'login_attempt_count': '0',
         }
 
-        login_response = self._call_api(
+        login_response = await self._call_api(
             'accounts/login/', params=login_params, return_response=True)
 
+        login_json = await self._read_response(login_response)
         if not self.csrftoken:
             raise ClientError(
                 'Unable to get csrf from login.',
-                error_response=self._read_response(login_response))
-
-        login_json = json.loads(self._read_response(login_response))
+                error_response=login_json)
 
         if not login_json.get('logged_in_user', {}).get('pk'):
             raise ClientLoginError('Unable to login.')
@@ -73,10 +72,10 @@ class AccountsEndpointsMixin(object):
         # self.news_inbox()
         # self.explore()
 
-    def current_user(self):
+    async def current_user(self):
         """Get current user info"""
         params = self.authenticated_params
-        res = self._call_api('accounts/current_user/', params=params, query={'edit': 'true'})
+        res = await self._call_api('accounts/current_user/', params=params, query={'edit': 'true'})
         if self.auto_patch:
             ClientCompatPatch.user(res['user'], drop_incompat_keys=self.drop_incompat_keys)
         return res

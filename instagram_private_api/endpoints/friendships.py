@@ -43,7 +43,7 @@ class FriendshipsEndpointsMixin(object):
              for u in res.get('users', [])]
         return res
 
-    def user_followers(self, user_id, rank_token, **kwargs):
+    async def user_followers(self, user_id, rank_token, **kwargs):
         """
         Get user followers
 
@@ -62,7 +62,7 @@ class FriendshipsEndpointsMixin(object):
             'rank_token': rank_token,
         }
         query_params.update(kwargs)
-        res = self._call_api(endpoint, query=query_params)
+        res = await self._call_api(endpoint, query=query_params)
         if self.auto_patch:
             [ClientCompatPatch.list_user(u, drop_incompat_keys=self.drop_incompat_keys)
              for u in res.get('users', [])]

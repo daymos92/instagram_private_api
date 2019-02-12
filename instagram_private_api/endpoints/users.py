@@ -9,14 +9,14 @@ from ..utils import raise_if_invalid_rank_token
 class UsersEndpointsMixin(object):
     """For endpoints in ``/users/``."""
 
-    def user_info(self, user_id):
+    async def user_info(self, user_id):
         """
         Get user info for a specified user id
 
         :param user_id:
         :return:
         """
-        res = self._call_api('users/{user_id!s}/info/'.format(**{'user_id': user_id}))
+        res = await self._call_api('users/{user_id!s}/info/'.format(**{'user_id': user_id}))
         if self.auto_patch:
             ClientCompatPatch.user(res['user'], drop_incompat_keys=self.drop_incompat_keys)
         return res

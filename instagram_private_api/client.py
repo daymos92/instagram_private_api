@@ -4,7 +4,10 @@
 # https://opensource.org/licenses/MIT
 
 # -*- coding: utf-8 -*-
+import codecs
+import pickle
 
+import aiohttp
 import logging
 import hmac
 import hashlib
@@ -95,6 +98,7 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
         self.drop_incompat_keys = kwargs.pop('drop_incompat_keys', False)
         self.api_url = kwargs.pop('api_url', None) or self.API_URL
         self.timeout = kwargs.pop('timeout', 15)
+        self.limit_connector = kwargs.pop('limit_connector', 1)
         self.on_login = kwargs.pop('on_login', None)
         self.logger = logger
 
@@ -154,41 +158,43 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
                 kwargs.pop('version_code', None) or user_settings.get('version_code') or
                 Constants.VERSION_CODE)
 
-        cookie_string = kwargs.pop('cookie', None) or user_settings.get('cookie')
-        cookie_jar = ClientCookieJar(cookie_string=cookie_string)
-        if cookie_string and cookie_jar.auth_expires and int(time.time()) >= cookie_jar.auth_expires:
-            raise ClientCookieExpiredError('Cookie expired at {0!s}'.format(cookie_jar.auth_expires))
-        cookie_handler = compat_urllib_request.HTTPCookieProcessor(cookie_jar)
+        self.cookie_string = kwargs.pop('cookie', None) or user_settings.get('cookie')
 
-        proxy_handler = None
-        proxy = kwargs.pop('proxy', None)
-        if proxy:
-            warnings.warn('Proxy support is alpha.', UserWarning)
-            parsed_url = compat_urllib_parse_urlparse(proxy)
-            if parsed_url.netloc and parsed_url.scheme:
-                proxy_address = '{0!s}://{1!s}'.format(parsed_url.scheme, parsed_url.netloc)
-                proxy_handler = compat_urllib_request.ProxyHandler({'https': proxy_address})
-            else:
-                raise ValueError('Invalid proxy argument: {0!s}'.format(proxy))
-        handlers = []
-        if proxy_handler:
-            handlers.append(proxy_handler)
+        # cookie_jar = ClientCookieJar(cookie_string=cookie_string)
+        # if cookie_string and cookie_jar.auth_expires and int(time.time()) >= cookie_jar.auth_expires:
+        #     raise ClientCookieExpiredError('Cookie expired at {0!s}'.format(cookie_jar.auth_expires))
+        # cookie_handler = compat_urllib_request.HTTPCookieProcessor(cookie_jar)
+
+        # proxy_handler = None
+        self.proxy = kwargs.pop('proxy', None)
+
+        # if proxy:
+        #     warnings.warn('Proxy support is alpha.', UserWarning)
+        #     parsed_url = compat_urllib_parse_urlparse(proxy)
+        #     if parsed_url.netloc and parsed_url.scheme:
+        #         proxy_address = '{0!s}://{1!s}'.format(parsed_url.scheme, parsed_url.netloc)
+        #         proxy_handler = compat_urllib_request.ProxyHandler({'https': proxy_address})
+        #     else:
+        #         raise ValueError('Invalid proxy argument: {0!s}'.format(proxy))
+        # handlers = []
+        # if proxy_handler:
+        #     handlers.append(proxy_handler)
 
         # Allow user to override custom ssl context where possible
-        custom_ssl_context = kwargs.pop('custom_ssl_context', None)
-        try:
-            httpshandler = compat_urllib_request.HTTPSHandler(context=custom_ssl_context)
-        except TypeError:
-            # py version < 2.7.9
-            httpshandler = compat_urllib_request.HTTPSHandler()
+        # custom_ssl_context = kwargs.pop('custom_ssl_context', None)
+        # try:
+        #     httpshandler = compat_urllib_request.HTTPSHandler(context=custom_ssl_context)
+        # except TypeError:
+        #     # py version < 2.7.9
+        #     httpshandler = compat_urllib_request.HTTPSHandler()
 
-        handlers.extend([
-            compat_urllib_request.HTTPHandler(),
-            httpshandler,
-            cookie_handler])
-        opener = compat_urllib_request.build_opener(*handlers)
-        opener.cookie_jar = cookie_jar
-        self.opener = opener
+        # handlers.extend([
+        #     compat_urllib_request.HTTPHandler(),
+        #     httpshandler,
+        #     cookie_handler])
+        # opener = compat_urllib_request.build_opener(*handlers)
+        # opener.cookie_jar = cookie_jar
+        # self.opener = opener
 
         # ad_id must be initialised after cookie_jar/opener because
         # it relies on self.authenticated_user_name
@@ -196,13 +202,25 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
             kwargs.pop('ad_id', None) or user_settings.get('ad_id') or
             self.generate_adid())
 
-        if not cookie_string:   # [TODO] There's probably a better way than to depend on cookie_string
-            if not self.username or not self.password:
-                raise ClientLoginRequiredError('login_required', code=400)
-            self.login()
+        # if not cookie_string:   # [TODO] There's probably a better way than to depend on cookie_string
+        #     if not self.username or not self.password:
+        #         raise ClientLoginRequiredError('login_required', code=400)
+        #     self.login()
 
         self.logger.debug('USERAGENT: {0!s}'.format(self.user_agent))
         super(Client, self).__init__()
+
+    async def init(self):
+        if self.cookie_string:
+            cookie_jar = ClientCookieJar(self.cookie_string)
+        else:
+            cookie_jar = ClientCookieJar()
+        connector = aiohttp.TCPConnector(verify_ssl=False, limit=self.limit_connector)
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        self.session = aiohttp.ClientSession(connector=connector, timeout=timeout, cookie_jar=cookie_jar)
+        if not cookie_jar:
+            await self.login()
+
 
     @property
     def settings(self):
@@ -309,27 +327,34 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
         }
 
     def get_cookie_value(self, key, domain=''):
-        now = int(time.time())
-        eternity = now + 100 * 365 * 24 * 60 * 60   # future date for non-expiring cookies
-        if not domain:
-            domain = compat_urllib_parse_urlparse(self.API_URL).netloc
-
-        for cookie in sorted(
-                self.cookie_jar, key=lambda c: c.expires or eternity, reverse=True):
-            # don't return expired cookie
-            if cookie.expires and cookie.expires < now:
-                continue
-            # cookie domain may be i.instagram.com or .instagram.com
-            cookie_domain = cookie.domain
-            # simple domain matching
-            if cookie_domain.startswith('.'):
-                cookie_domain = cookie_domain[1:]
-            if not domain.endswith(cookie_domain):
-                continue
-
-            if cookie.name.lower() == key.lower():
+        # now = int(time.time())
+        # eternity = now + 100 * 365 * 24 * 60 * 60   # future date for non-expiring cookies
+        # if not domain:
+        #     domain = compat_urllib_parse_urlparse(self.API_URL).netloc
+        # if self.cookie_jar is None:
+        #     return None
+        # for cookie in sorted(
+        #         self.cookie_jar, key=lambda c: c['expires'] or eternity, reverse=True):
+        #     # don't return expired cookie
+        #     if cookie.expires and cookie.expires < now:
+        #         continue
+        #     # cookie domain may be i.instagram.com or .instagram.com
+        #     cookie_domain = cookie.domain
+        #     # simple domain matching
+        #     if cookie_domain.startswith('.'):
+        #         cookie_domain = cookie_domain[1:]
+        #     if not domain.endswith(cookie_domain):
+        #         continue
+        #
+        #     if cookie.key.lower() == key.lower():
+        #         return cookie.value
+        #
+        # return None
+        if self.cookie_jar is None:
+            return None
+        for cookie in self.cookie_jar:
+            if cookie.key.lower() == key.lower():
                 return cookie.value
-
         return None
 
     @property
@@ -379,7 +404,9 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
     @property
     def cookie_jar(self):
         """The client's cookiejar instance."""
-        return self.opener.cookie_jar
+        if hasattr(self, 'session'):
+            return self.session.cookie_jar
+        return None
 
     @property
     def default_headers(self):
@@ -460,21 +487,24 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
         return self.generate_uuid(False, modified_seed)
 
     @staticmethod
-    def _read_response(response):
+    async def _read_response(response):
         """
         Extract the response body from a http response.
 
         :param response:
         :return:
         """
-        if response.info().get('Content-Encoding') == 'gzip':
-            buf = BytesIO(response.read())
-            res = gzip.GzipFile(fileobj=buf).read().decode('utf8')
-        else:
-            res = response.read().decode('utf8')
+        # if response.info().get('Content-Encoding') == 'gzip':
+        #         #     buf = BytesIO(response.read())
+        #         #     res = gzip.GzipFile(fileobj=buf).read().decode('utf8')
+        #         # else:
+        #         #     res = response.read().decode('utf8')
+        #         # return res
+
+        res = await response.json()
         return res
 
-    def _call_api(self, endpoint, params=None, query=None, return_response=False, unsigned=False, version='v1'):
+    async def _call_api(self, endpoint, params=None, query=None, return_response=False, unsigned=False, version='v1'):
         """
         Calls the private api.
 
@@ -507,31 +537,38 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
                 else:
                     # direct form post
                     post_params = params
-                data = compat_urllib_parse.urlencode(post_params).encode('ascii')
+                # data = compat_urllib_parse.urlencode(post_params).encode('ascii')
+                data = post_params
 
-        req = compat_urllib_request.Request(url, data, headers=headers)
+        # req = compat_urllib_request.Request(url, data, headers=headers)
         try:
-            self.logger.debug('REQUEST: {0!s} {1!s}'.format(url, req.get_method()))
+            self.logger.debug('REQUEST: {0!s} {1!s}'.format(url, 'GET'))
             self.logger.debug('DATA: {0!s}'.format(data))
-            response = self.opener.open(req, timeout=self.timeout)
-        except compat_urllib_error.HTTPError as e:
-            error_response = self._read_response(e)
-            self.logger.debug('RESPONSE: {0:d} {1!s}'.format(e.code, error_response))
+            # response = self.opener.open(req, timeout=self.timeout)
+            if query:
+                response = await self.session.get(url=url, headers=headers,
+                                                  timeout=self.timeout, proxy=self.proxy)
+            else:
+                response = await self.session.post(url=url, headers=headers, data=data,
+                                                   timeout=self.timeout, proxy=self.proxy)
+        except aiohttp.ClientResponseError as e:
+            error_response = await self._read_response(e)
+            self.logger.debug('RESPONSE: {0:d} {1!s}'.format(e.status, error_response))
             ErrorHandler.process(e, error_response)
 
-        except (SSLError, timeout, SocketError,
-                compat_urllib_error.URLError,   # URLError is base of HTTPError
-                compat_http_client.HTTPException,
-                ConnectionError) as connection_error:
-            raise ClientConnectionError('{} {}'.format(
-                connection_error.__class__.__name__, str(connection_error)))
+        # except (SSLError, timeout, SocketError,
+        #         compat_urllib_error.URLError,   # URLError is base of HTTPError
+        #         compat_http_client.HTTPException,
+        #         ConnectionError) as connection_error:
+        #     raise ClientConnectionError('{} {}'.format(
+        #         connection_error.__class__.__name__, str(connection_error)))
 
         if return_response:
             return response
 
-        response_content = self._read_response(response)
-        self.logger.debug('RESPONSE: {0:d} {1!s}'.format(response.code, response_content))
-        json_response = json.loads(response_content)
+        json_response = await self._read_response(response)
+        self.logger.debug('RESPONSE: {0:d} {1!s}'.format(response.status, json_response))
+        # json_response = json.loads(response_content)
 
         if json_response.get('message', '') == 'login_required':
             raise ClientLoginRequiredError(

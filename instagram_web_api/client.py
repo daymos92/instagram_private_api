@@ -4,7 +4,7 @@
 # https://opensource.org/licenses/MIT
 
 # -*- coding: utf-8 -*-
-
+import aiohttp
 import logging
 import hashlib
 import json
@@ -18,10 +18,13 @@ import string
 import random
 from socket import timeout, error as SocketError
 from ssl import SSLError
+# from .compat import (
+#     compat_urllib_request, compat_urllib_parse,
+#     compat_urllib_parse_urlparse, compat_urllib_error,
+#     compat_http_client, compat_cookiejar
+# )
 from .compat import (
-    compat_urllib_request, compat_urllib_parse,
-    compat_urllib_parse_urlparse, compat_urllib_error,
-    compat_http_client, compat_cookiejar
+    compat_urllib_parse_urlparse, compat_urllib_parse,
 )
 from .compatpatch import ClientCompatPatch
 from .errors import (
@@ -81,6 +84,7 @@ class Client(object):
         self.auto_patch = kwargs.pop('auto_patch', False)
         self.drop_incompat_keys = kwargs.pop('drop_incompat_keys', False)
         self.timeout = kwargs.pop('timeout', 10)
+        self.limit_connector = kwargs.pop('limit_connector', 1)
         self.username = kwargs.pop('username', None)
         self.password = kwargs.pop('password', None)
         self.authenticate = kwargs.pop('authenticate', False)
@@ -92,55 +96,58 @@ class Client(object):
                                   or self.MOBILE_USER_AGENT)
 
         self.init_csrftoken = None
-        self.rhx_gis = kwargs.pop('rhx_gis', None) or user_settings.get('rhx_gis')
-
-        cookie_string = kwargs.pop('cookie', None) or user_settings.get('cookie')
-        cookie_jar = ClientCookieJar(cookie_string=cookie_string)
-        if cookie_string and cookie_jar.auth_expires and int(time.time()) >= cookie_jar.auth_expires:
-            raise ClientCookieExpiredError('Cookie expired at {0!s}'.format(cookie_jar.auth_expires))
-
-        custom_ssl_context = kwargs.pop('custom_ssl_context', None)
-        proxy_handler = None
-        proxy = kwargs.pop('proxy', None)
-        if proxy:
-            warnings.warn('Proxy support is alpha.', UserWarning)
-            parsed_url = compat_urllib_parse_urlparse(proxy)
-            if parsed_url.netloc and parsed_url.scheme:
-                proxy_address = '{0!s}://{1!s}'.format(parsed_url.scheme, parsed_url.netloc)
-                proxy_handler = compat_urllib_request.ProxyHandler({'https': proxy_address})
-            else:
-                raise ValueError('Invalid proxy argument: {0!s}'.format(proxy))
-        handlers = []
-        if proxy_handler:
-            handlers.append(proxy_handler)
-        cookie_handler = compat_urllib_request.HTTPCookieProcessor(cookie_jar)
-        try:
-            httpshandler = compat_urllib_request.HTTPSHandler(context=custom_ssl_context)
-        except TypeError:
-            # py version < 2.7.9
-            httpshandler = compat_urllib_request.HTTPSHandler()
-
-        handlers.extend([
-            compat_urllib_request.HTTPHandler(),
-            httpshandler,
-            cookie_handler])
-        opener = compat_urllib_request.build_opener(*handlers)
-        opener.cookie_jar = cookie_jar
-        self.opener = opener
+        # self.rhx_gis = kwargs.pop('rhx_gis', None) or user_settings.get('rhx_gis')
+        #
+        # cookie_string = kwargs.pop('cookie', None) or user_settings.get('cookie')
+        # cookie_jar = ClientCookieJar(cookie_string=cookie_string)
+        # if cookie_string and cookie_jar.auth_expires and int(time.time()) >= cookie_jar.auth_expires:
+        #     raise ClientCookieExpiredError('Cookie expired at {0!s}'.format(cookie_jar.auth_expires))
+        #
+        # custom_ssl_context = kwargs.pop('custom_ssl_context', None)
+        # proxy_handler = None
+        # proxy = kwargs.pop('proxy', None)
+        # if proxy:
+        #     warnings.warn('Proxy support is alpha.', UserWarning)
+        #     parsed_url = compat_urllib_parse_urlparse(proxy)
+        #     if parsed_url.netloc and parsed_url.scheme:
+        #         proxy_address = '{0!s}://{1!s}'.format(parsed_url.scheme, parsed_url.netloc)
+        #         proxy_handler = compat_urllib_request.ProxyHandler({'https': proxy_address})
+        #     else:
+        #         raise ValueError('Invalid proxy argument: {0!s}'.format(proxy))
+        # handlers = []
+        # if proxy_handler:
+        #     handlers.append(proxy_handler)
+        # cookie_handler = compat_urllib_request.HTTPCookieProcessor(cookie_jar)
+        # try:
+        #     httpshandler = compat_urllib_request.HTTPSHandler(context=custom_ssl_context)
+        # except TypeError:
+        #     # py version < 2.7.9
+        #     httpshandler = compat_urllib_request.HTTPSHandler()
+        #
+        # handlers.extend([
+        #     compat_urllib_request.HTTPHandler(),
+        #     httpshandler,
+        #     cookie_handler])
+        # opener = compat_urllib_request.build_opener(*handlers)
+        # opener.cookie_jar = cookie_jar
+        # self.opener = opener
 
         self.logger = logger
-        if not self.csrftoken:
-            self.init()
-        if not self.is_authenticated and self.authenticate and self.username and self.password:
-            self.login()
+        # if not self.csrftoken:
+        #     self.init()
+        # if not self.is_authenticated and self.authenticate and self.username and self.password:
+        #     self.login()
+
+        proxy = kwargs.pop('proxy', None)
+        self.proxy = proxy
 
     @property
     def cookie_jar(self):
-        return self.opener.cookie_jar
+        return self.session.cookie_jar
 
     def get_cookie_value(self, key):
         for cookie in self.cookie_jar:
-            if cookie.name.lower() == key.lower():
+            if cookie.key.lower() == key.lower():
                 return cookie.value
         return None
 
@@ -171,28 +178,32 @@ class Client(object):
         """Helper property that extracts the settings that you should cache
         in addition to username and password."""
         return {
-            'cookie': self.opener.cookie_jar.dump(),
+            # 'cookie': self.session.cookie_jar.dump(),
             'created_ts': int(time.time()),
             'rhx_gis': self.rhx_gis,
             'user_agent': self.user_agent,
         }
 
     @staticmethod
-    def _read_response(response):
+    async def _read_response(response, return_json=True):
         """
         Extract the response body from a http response.
 
         :param response:
         :return:
         """
-        if response.info().get('Content-Encoding') == 'gzip':
-            buf = BytesIO(response.read())
-            res = gzip.GzipFile(fileobj=buf).read().decode('utf8')
+        if return_json:
+            res = await response.json()
         else:
-            res = response.read().decode('utf8')
+            res = await response.text()
         return res
+        # if response.get_encoding() == 'gzip':
+        #     res = await response.read().decode('utf8')
+        # else:
+        #     res = response.text('utf8')
+        # return res
 
-    def generate_request_signature(self, query, endpoint=None):
+    async def generate_request_signature(self, query, endpoint=None):
         if self.rhx_gis and query.get('query_hash') and query.get('variables'):
             variables = query.get('variables')
         elif self.rhx_gis and '__a' in query and endpoint:
@@ -207,8 +218,8 @@ class Client(object):
         ).encode('utf-8'))
         return m.hexdigest()
 
-    def _make_request(self, url, params=None, headers=None, query=None,
-                      return_response=False, get_method=None):
+    async def _make_request(self, url, params=None, headers=None, query=None,
+                      return_response=False, method='get'):
         """
         Calls the web API.
 
@@ -217,7 +228,7 @@ class Client(object):
         :param headers: custom headers
         :param query: get url params
         :param return_response: bool flag to only return the http response object
-        :param get_method: custom http method type
+        :param method: custom http method type
         :return:
         """
         if not headers:
@@ -240,13 +251,13 @@ class Client(object):
                 })
         if query:
             url += ('?' if '?' not in url else '&') + compat_urllib_parse.urlencode(query)
-            sig = self.generate_request_signature(query, url)
+            sig = await self.generate_request_signature(query, url)
             if sig:
                 headers['X-Instagram-GIS'] = sig
 
-        req = compat_urllib_request.Request(url, headers=headers)
-        if get_method:
-            req.get_method = get_method
+        # req = compat_urllib_request.Request(url, headers=headers)
+        # if get_method:
+        #     req.get_method = get_method
 
         data = None
         if params or params == '':
@@ -255,56 +266,55 @@ class Client(object):
             else:
                 data = compat_urllib_parse.urlencode(params).encode('ascii')
         try:
-            self.logger.debug('REQUEST: {0!s} {1!s}'.format(url, req.get_method()))
+            self.logger.debug('REQUEST: {0!s} {1!s}'.format(url, method))
             self.logger.debug('REQ HEADERS: {0!s}'.format(
                 ['{}: {}'.format(k, v) for k, v in headers.items()]
             ))
             self.logger.debug('REQ COOKIES: {0!s}'.format(
-                ['{}: {}'.format(c.name, c.value) for c in self.cookie_jar]
+                ['{}: {}'.format(c.key, c.value) for c in self.cookie_jar]
             ))
             self.logger.debug('REQ DATA: {0!s}'.format(data))
-            res = self.opener.open(req, data=data, timeout=self.timeout)
+
+            res = await self.session.get(url=url, headers=headers, data=data,
+                                         timeout=self.timeout, proxy=self.proxy)
 
             self.logger.debug('RESPONSE: {0:d} {1!s}'.format(
-                res.code, res.geturl()
+                res.status, res.url
             ))
             self.logger.debug('RES HEADERS: {0!s}'.format(
-                [u'{}: {}'.format(k, v) for k, v in res.info().items()]
+                [u'{}: {}'.format(k, v) for k, v in res.headers.items()]
             ))
             if return_response:
                 return res
 
-            response_content = self._read_response(res)
+            response_content = await self._read_response(res)
 
             self.logger.debug('RES BODY: {0!s}'.format(response_content))
-            return json.loads(response_content)
+            return response_content
 
-        except compat_urllib_error.HTTPError as e:
-            msg = 'HTTPError "{0!s}" while opening {1!s}'.format(e.reason, url)
-            if e.code == 400:
-                raise ClientBadRequestError(msg, e.code)
-            elif e.code == 403:
-                raise ClientForbiddenError(msg, e.code)
-            elif e.code == 429:
-                raise ClientThrottledError(msg, e.code)
-            raise ClientError(msg, e.code)
+        except aiohttp.ClientResponseError as e:
+            msg = 'HTTPError "{0!s}" while opening {1!s}'.format(e.message, url)
+            if e.status == 400:
+                raise ClientBadRequestError(msg, e.status)
+            elif e.status == 403:
+                raise ClientForbiddenError(msg, e.status)
+            elif e.status == 429:
+                raise ClientThrottledError(msg, e.status)
+            raise ClientError(msg, e.status)
 
-        except (SSLError, timeout, SocketError,
-                compat_urllib_error.URLError,   # URLError is base of HTTPError
-                compat_http_client.HTTPException,
-                ConnectionError) as connection_error:
-            raise ClientConnectionError('{} {}'.format(
-                connection_error.__class__.__name__, str(connection_error)))
+        # except Exception as connection_error:
+        #     raise ClientConnectionError('{} {}'.format(
+        #         connection_error.__class__.__name__, str(connection_error)))
 
     @staticmethod
-    def _sanitise_media_id(media_id):
+    async def _sanitise_media_id(media_id):
         """The web API uses the numeric media ID only, and not the formatted one where it's XXXXX_YYY"""
         if re.match(r'[0-9]+_[0-9]+', media_id):    # endpoint uses the entirely numeric ID, not XXXX_YYY
             media_id = media_id.split('_')[0]
         return media_id
 
     @staticmethod
-    def _extract_rhx_gis(html):
+    async def _extract_rhx_gis(html):
         mobj = re.search(
             r'"rhx_gis":"(?P<rhx_gis>[a-f0-9]{32})"', html, re.MULTILINE)
         if mobj:
@@ -312,7 +322,7 @@ class Client(object):
         return None
 
     @staticmethod
-    def _extract_csrftoken(html):
+    async def _extract_csrftoken(html):
         mobj = re.search(
             r'"csrf_token":"(?P<csrf_token>[A-Za-z0-9]+)"', html, re.MULTILINE)
 
@@ -320,26 +330,23 @@ class Client(object):
             return mobj.group('csrf_token')
         return None
 
-    def init(self):
+    async def init(self):
         """Make a GET request to get the first csrf token and rhx_gis"""
+        cookies = {
+            'ig_cb': 1
+        }
+        connector = aiohttp.TCPConnector(verify_ssl=False, limit=self.limit_connector)
+        timeout = aiohttp.ClientTimeout(total=self.timeout)
+        self.session = aiohttp.ClientSession(cookies=cookies, connector=connector, timeout=timeout)
+        init_res = await self._make_request(
+            'https://www.instagram.com/', return_response=True, method='get')
+        init_res_content = await self._read_response(init_res, return_json=False)
 
-        # try to emulate cookies consent
-        self.cookie_jar.set_cookie(
-            compat_cookiejar.Cookie(
-                0, 'ig_cb', '1', None, False,
-                'www.instagram.com', False, None, '/',
-                False, False, None, True, None, None, {})
-        )
-
-        init_res = self._make_request(
-            'https://www.instagram.com/', return_response=True, get_method=lambda: 'GET')
-        init_res_content = self._read_response(init_res)
-
-        rhx_gis = self._extract_rhx_gis(init_res_content)
+        rhx_gis = await self._extract_rhx_gis(init_res_content)
         self.rhx_gis = rhx_gis
 
         if not self.csrftoken:
-            csrftoken = self._extract_csrftoken(init_res_content)
+            csrftoken = await self._extract_csrftoken(init_res_content)
             self.init_csrftoken = csrftoken
 
         if not self.csrftoken:
@@ -347,14 +354,12 @@ class Client(object):
         if not self.rhx_gis:
             raise ClientError('Unable to get rhx_gis from init request.')
         # required to avoid 403 when doing unauthenticated requests
-        self.cookie_jar.set_cookie(
-            compat_cookiejar.Cookie(
-                0, 'ig_pr', '1', None, False,
-                'www.instagram.com', False, None, '/',
-                False, False, None, True, None, None, {})
-        )
+        self.session.cookie_jar.update_cookies({
+            'ig_pr': 1
 
-    def login(self):
+        })
+
+    async def login(self):
         """Login to the web site."""
         if not self.username or not self.password:
             raise ClientError('username/password is blank')
@@ -368,7 +373,7 @@ class Client(object):
             on_login_callback(self)
         return login_res
 
-    def user_info(self, user_id, **kwargs):     # pragma: no cover
+    async def user_info(self, user_id, **kwargs):     # pragma: no cover
         """
         OBSOLETE. Get user info.
 
@@ -385,7 +390,7 @@ class Client(object):
                  'media {{count}}, followed_by {{count}}, '
                  'follows {{count}} }}'.format(**{'user_id': user_id}),
         }
-        user = self._make_request(self.API_URL, params=params)
+        user = await self._make_request(self.API_URL, params=params)
 
         if not user.get('id'):
             raise ClientError('Not Found', 404)
@@ -394,7 +399,7 @@ class Client(object):
             user = ClientCompatPatch.user(user, drop_incompat_keys=self.drop_incompat_keys)
         return user
 
-    def user_info2(self, user_name, **kwargs):
+    async def user_info2(self, user_name, **kwargs):
         """
         Get user info.
 
@@ -405,19 +410,19 @@ class Client(object):
         # For authed and unauthed clients, a "fresh" rhx_gis must be used
         endpoint = 'https://www.instagram.com/{username!s}/'.format(**{'username': user_name})
         try:
-            info = self._make_request(endpoint, query={'__a': '1'})
+            info = await self._make_request(endpoint, query={'__a': '1'})
         except ClientError as ce:
             if ce.code != 403:
                 raise ce
             # reinit to get a fresh rhx_gis
-            self.init()
-            info = self._make_request(endpoint, query={'__a': '1'})
+            await self.init()
+            info = await self._make_request(endpoint, query={'__a': '1'})
 
         if self.auto_patch:
             ClientCompatPatch.user(info['graphql']['user'], drop_incompat_keys=self.drop_incompat_keys)
         return info['graphql']['user']
 
-    def user_feed(self, user_id, **kwargs):
+    async def user_feed(self, user_id, **kwargs):
         """
         Get user feed
 
@@ -450,7 +455,7 @@ class Client(object):
             'query_hash': 'e7e2f4da4b02303f74f0841279e52d76',
             'variables': json.dumps(variables, separators=(',', ':'))
         }
-        info = self._make_request(self.GRAPHQL_API_URL, query=query)
+        info = await self._make_request(self.GRAPHQL_API_URL, query=query)
 
         if not info.get('data', {}).get('user'):
             # non-existent accounts do not return media at all
@@ -467,7 +472,7 @@ class Client(object):
                 'edge_owner_to_timeline_media', {}).get('edges', [])
         return info
 
-    def media_info(self, short_code, **kwargs):     # pragma: no cover
+    async def media_info(self, short_code, **kwargs):     # pragma: no cover
         """
         OBSOLETE. Get media info. Does not properly extract carousel media.
 
@@ -496,7 +501,7 @@ class Client(object):
             media = ClientCompatPatch.media(media, drop_incompat_keys=self.drop_incompat_keys)
         return media
 
-    def media_info2(self, short_code):
+    async def media_info2(self, short_code):
         """
         Alternative method to get media info. This method works for carousel media.
 
@@ -522,7 +527,7 @@ class Client(object):
             media = ClientCompatPatch.media(media, drop_incompat_keys=self.drop_incompat_keys)
         return media
 
-    def media_comments(self, short_code, **kwargs):
+    async def media_comments(self, short_code, **kwargs):
         """
         Get media comments
 
@@ -567,7 +572,7 @@ class Client(object):
         return info
 
     @login_required
-    def media_likers(self, short_code, **kwargs):
+    async def media_likers(self, short_code, **kwargs):
         """
         Get media likers
 
@@ -611,7 +616,7 @@ class Client(object):
         return info
 
     @login_required
-    def user_following(self, user_id, **kwargs):
+    async def user_following(self, user_id, **kwargs):
         """
         Get user's followings. Login required.
 
@@ -651,7 +656,7 @@ class Client(object):
         return info
 
     @login_required
-    def user_followers(self, user_id, **kwargs):
+    async def user_followers(self, user_id, **kwargs):
         """
         Get a user's followers. Login required.
 
@@ -691,7 +696,7 @@ class Client(object):
         return info
 
     @login_required
-    def post_like(self, media_id):
+    async def post_like(self, media_id):
         """
         Like an update. Login required.
 
@@ -707,7 +712,7 @@ class Client(object):
         return res
 
     @login_required
-    def delete_like(self, media_id):
+    async def delete_like(self, media_id):
         """
         Unlike an update. Login required.
 
@@ -722,7 +727,7 @@ class Client(object):
         return self._make_request(endpoint, params='')
 
     @login_required
-    def friendships_create(self, user_id):
+    async def friendships_create(self, user_id):
         """
         Follow a user. Login required.
 
@@ -736,7 +741,7 @@ class Client(object):
         return self._make_request(endpoint, params='')
 
     @login_required
-    def friendships_destroy(self, user_id):
+    async def friendships_destroy(self, user_id):
         """
         Unfollow a user. Login required.
 
@@ -750,7 +755,7 @@ class Client(object):
         return self._make_request(endpoint, params='')
 
     @login_required
-    def post_comment(self, media_id, comment_text):
+    async def post_comment(self, media_id, comment_text):
         """
         Post a new comment. Login required.
 
@@ -787,7 +792,7 @@ class Client(object):
         return self._make_request(endpoint, params=params)
 
     @login_required
-    def delete_comment(self, media_id, comment_id):
+    async def delete_comment(self, media_id, comment_id):
         """
         Delete a comment. Login required.
 
@@ -803,7 +808,7 @@ class Client(object):
             'media_id': media_id, 'comment_id': comment_id})
         return self._make_request(endpoint, params='')
 
-    def search(self, query_text):
+    async def search(self, query_text):
         """
         General search
 
@@ -818,7 +823,7 @@ class Client(object):
         return res
 
     @login_required
-    def post_photo(self, photo_data, caption=''):
+    async def post_photo(self, photo_data, caption=''):
         """
         Post a photo
 
@@ -859,7 +864,7 @@ class Client(object):
 
         try:
             res = self.opener.open(req, timeout=self.timeout)
-            response_content = self._read_response(res)
+            response_content = await self._read_response(res)
 
             self.logger.debug('RESPONSE: {0!s}'.format(response_content))
             upload_res = json.loads(response_content)

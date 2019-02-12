@@ -189,14 +189,14 @@ class AccountTests(ApiTestBase):
                 self.api.login()
             self.assertEqual(cle.exception.msg, 'Invalid')
 
-    def test_current_user(self):
-        results = self.api.current_user()
+    async def test_current_user(self):
+        results = await self.api.current_user()
         self.assertEqual(results.get('status'), 'ok')
         self.assertEqual(str(results.get('user', {}).get('pk', '')), self.api.authenticated_user_id)
 
     @unittest.skip('Modifies data.')
-    def test_edit_profile(self):
-        user = self.api.current_user()['user']
+    async def test_edit_profile(self):
+        user = await self.api.current_user()['user']
         results = self.api.edit_profile(
             first_name=user['full_name'],
             biography=user['biography'] + ' <3',
