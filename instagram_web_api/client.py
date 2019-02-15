@@ -290,6 +290,9 @@ class Client(object):
             response_content = await self._read_response(res)
 
             self.logger.debug('RES BODY: {0!s}'.format(response_content))
+
+            if response_content.get('status') == 'fail':
+                raise ClientError(response_content.get('message'), 403)
             return response_content
 
         except aiohttp.ClientResponseError as e:
