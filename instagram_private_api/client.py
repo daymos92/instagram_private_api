@@ -218,7 +218,7 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
         connector = aiohttp.TCPConnector(verify_ssl=False, limit=self.limit_connector)
         timeout = aiohttp.ClientTimeout(total=self.timeout)
         self.session = aiohttp.ClientSession(connector=connector, timeout=timeout, cookie_jar=cookie_jar)
-        if not cookie_jar:
+        if not self.cookie_string:
             await self.login()
 
 
@@ -572,13 +572,13 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
 
         if json_response.get('message', '') == 'login_required':
             raise ClientLoginRequiredError(
-                json_response.get('message'), code=response.code,
+                json_response.get('message'), code=response.status,
                 error_response=json.dumps(json_response))
 
         # not from oembed or an ok response
         if not json_response.get('provider_url') and json_response.get('status', '') != 'ok':
             raise ClientError(
-                json_response.get('message', 'Unknown error'), code=response.code,
+                json_response.get('message', 'Unknown error'), code=response.status,
                 error_response=json.dumps(json_response))
 
         return json_response
