@@ -562,7 +562,8 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
         #         ConnectionError) as connection_error:
         #     raise ClientConnectionError('{} {}'.format(
         #         connection_error.__class__.__name__, str(connection_error)))
-
+        if response.status == 404:
+            raise ClientError('Not Found', code=response.status)
         if return_response:
             return response
 
