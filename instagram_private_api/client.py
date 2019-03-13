@@ -552,9 +552,10 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
                 response = await self.session.post(url=url, headers=headers, data=data,
                                                    timeout=self.timeout, proxy=self.proxy)
         except aiohttp.ClientResponseError as e:
-            error_response = await self._read_response(e)
-            self.logger.debug('RESPONSE: {0:d} {1!s}'.format(e.status, error_response))
-            ErrorHandler.process(e, error_response)
+            raise ClientError(e.status, e.message)
+            # error_response = await self._read_response(e)
+            # self.logger.debug('RESPONSE: {0:d} {1!s}'.format(e.status, error_response))
+            # ErrorHandler.process(e, error_response)
 
         # except (SSLError, timeout, SocketError,
         #         compat_urllib_error.URLError,   # URLError is base of HTTPError
