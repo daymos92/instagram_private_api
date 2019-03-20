@@ -4,6 +4,8 @@
 # https://opensource.org/licenses/MIT
 
 # -*- coding: utf-8 -*-
+import decimal
+
 import aiohttp
 import logging
 import hashlib
@@ -43,6 +45,12 @@ from .common import ClientDeprecationWarning
 
 logger = logging.getLogger(__name__)
 warnings.simplefilter('always', ClientDeprecationWarning)
+
+
+def json_loads(*args, **kwargs):
+    def dec(s): return decimal.Decimal(s)
+    kwargs['parse_float'] = dec
+    return json.loads(*args, **kwargs)
 
 
 def login_required(fn):
@@ -193,7 +201,7 @@ class Client(object):
         :return:
         """
         if return_json:
-            res = await response.json()
+            res = await response.json(loads=json_loads)
         else:
             res = await response.text()
         return res
@@ -287,6 +295,10 @@ class Client(object):
             if return_response:
                 return res
 
+            if res.status == 404:
+                raise ClientError('Not Found', code=res.status)
+            if res.status >= 500:
+                raise ClientError('API Error', code=res.status)
             response_content = await self._read_response(res)
 
             self.logger.debug('RES BODY: {0!s}'.format(response_content))
@@ -917,7 +929,7 @@ class Client(object):
 
         return self._make_request(self.GRAPHQL_API_URL, query=query)
 
-    def location_feed(self, location_id, **kwargs):
+    async def location_feed(self, location_id, **kwargs):
         """
         Get a location feed.
 
@@ -945,7 +957,28 @@ class Client(object):
             'variables': json.dumps(variables, separators=(',', ':'))
         }
 
-        return self._make_request(self.GRAPHQL_API_URL, query=query)
+        return await self._make_request(self.GRAPHQL_API_URL, query=query)
+
+    async def location_feed2(self, location_id, slug=None, **kwargs):
+        """
+        Get a location feed.
+
+        :param location_id:
+        :param slug:
+        :return:
+        """
+        endpoint = 'https://www.instagram.com/explore/locations/{location_id}/'\
+            .format(location_id=location_id)
+        if slug:
+            endpoint += '{slug}/'
+            endpoint.format(slug=slug)
+        info = await self._make_request(endpoint, query={'__a': '1'})
+        info = info['graphql']['location']
+        address_json = info.pop('address_json')
+        if address_json is not None:
+            info['address'] = json.loads(address_json)
+
+        return info
 
     @login_required
     def timeline_feed(self, **kwargs):
