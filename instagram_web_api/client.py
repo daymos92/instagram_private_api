@@ -396,23 +396,10 @@ class Client(object):
         :param kwargs:
         :return:
         """
-        warnings.warn(
-            'This endpoint is obsolete. Do not use.', ClientDeprecationWarning)
+        url = 'https://i.instagram.com/api/v1/users/{}/info/'.format(user_id)
+        user = await self._make_request(url)
 
-        params = {
-            'q': 'ig_user({user_id}) {{id, username, full_name, profile_pic_url, '
-                 'biography, external_url, is_private, is_verified, '
-                 'media {{count}}, followed_by {{count}}, '
-                 'follows {{count}} }}'.format(**{'user_id': user_id}),
-        }
-        user = await self._make_request(self.API_URL, params=params)
-
-        if not user.get('id'):
-            raise ClientError('Not Found', 404)
-
-        if self.auto_patch:
-            user = ClientCompatPatch.user(user, drop_incompat_keys=self.drop_incompat_keys)
-        return user
+        return user.get('user')
 
     async def user_info2(self, user_name, **kwargs):
         """
