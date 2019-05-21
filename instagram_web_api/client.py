@@ -336,7 +336,7 @@ class Client(object):
         #     return mobj.group('rhx_gis')
         # return None
         tmp_str = ':{"id":"' + f'{random.randint(10000000, 99999999)}' + '"}'
-        return hashlib.md5(b'tmp_str')
+        return hashlib.md5(tmp_str.encode()).hexdigest()
 
     @staticmethod
     async def _extract_csrftoken(html):
