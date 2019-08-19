@@ -5,8 +5,8 @@ from ..compat import (
     compat_http_client
 )
 from ..errors import (
-    ErrorHandler, ClientError, ClientLoginError, ClientConnectionError
-)
+    ErrorHandler, ClientError, ClientLoginError, ClientConnectionError,
+    ClientLoginChallengeRequiredError)
 from ..http import MultipartFormDataEncoder
 from ..compatpatch import ClientCompatPatch
 from socket import timeout, error as SocketError
@@ -56,6 +56,10 @@ class AccountsEndpointsMixin(object):
                 error_response=login_json)
 
         if not login_json.get('logged_in_user', {}).get('pk'):
+            if login_json.get('message') == 'challenge_required':
+                raise ClientLoginChallengeRequiredError(msg=login_json.get('message'),
+                                                        challenge_url=login_json['challenge']['url'])
+
             raise ClientLoginError('Unable to login.')
 
         if self.on_login:

@@ -7,7 +7,7 @@ from ..utils import raise_if_invalid_rank_token
 class LocationsEndpointsMixin(object):
     """For endpoints related to location functionality."""
 
-    def location_info(self, location_id):
+    async def location_info(self, location_id):
         """
         Get a location info
 
@@ -30,9 +30,9 @@ class LocationsEndpointsMixin(object):
                 }
         """
         endpoint = 'locations/{location_id!s}/info/'.format(**{'location_id': location_id})
-        return self._call_api(endpoint)
+        return await self._call_api(endpoint)
 
-    def location_related(self, location_id, **kwargs):
+    async def location_related(self, location_id, **kwargs):
         """
         Get related locations
 
@@ -44,7 +44,7 @@ class LocationsEndpointsMixin(object):
             'visited': json.dumps([{'id': location_id, 'type': 'location'}], separators=(',', ':')),
             'related_types': json.dumps(['location'], separators=(',', ':'))}
         query.update(kwargs)
-        return self._call_api(endpoint, query=query)
+        return await self._call_api(endpoint, query=query)
 
     def location_search(self, latitude, longitude, query=None, **kwargs):
         """

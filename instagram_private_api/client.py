@@ -584,3 +584,29 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
                 error_response=json.dumps(json_response))
 
         return json_response
+
+    async def init_challenge_confirm(self, challenge_url):
+        data = {
+            'device_id': self.device_id,
+            'guid': self.uuid,
+            'adid': self.ad_id,
+            'phone_id': self.phone_id,
+            '_csrftoken': self.csrftoken,
+            'choice': 1
+        }
+        await self.session.post(url=challenge_url, data=data,
+                                headers=self.default_headers,
+                                proxy=self.proxy)
+
+    async def send_security_code(self, challenge_url, code):
+        data = {
+            'device_id': self.device_id,
+            'guid': self.uuid,
+            'adid': self.ad_id,
+            'phone_id': self.phone_id,
+            '_csrftoken': self.csrftoken,
+            'security_code': code
+        }
+        await self.session.post(url=challenge_url, data=data,
+                                headers=self.default_headers,
+                                proxy=self.proxy)
