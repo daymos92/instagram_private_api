@@ -18,6 +18,19 @@ class ClientLoginError(ClientError):
     pass
 
 
+class ClientLoginRequiredError(ClientError):
+    """Raised when login is required."""
+    pass
+
+
+class ClientLoginChallengeRequiredError(ClientError):
+    """Raised when login challenge required fails."""
+    def __init__(self, msg, challenge_url, code=None, error_response=''):
+        self.challenge_url = challenge_url
+        super(ClientError, self).__init__(msg, code, error_response)
+
+
+
 class ClientCookieExpiredError(ClientError):
     """Raised when cookies have expired."""
     pass

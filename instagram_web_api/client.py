@@ -33,7 +33,7 @@ from .errors import (
     ClientError, ClientLoginError, ClientCookieExpiredError,
     ClientConnectionError, ClientBadRequestError,
     ClientForbiddenError, ClientThrottledError,
-)
+    ClientLoginChallengeRequiredError, ClientLoginRequiredError)
 try:  # Python 3:
     # Not a no-op, we're adding this to the namespace so it can be imported.
     ConnectionError = ConnectionError       # pylint: disable=redefined-builtin
@@ -104,9 +104,9 @@ class Client(object):
                                   or self.MOBILE_USER_AGENT)
 
         self.init_csrftoken = None
-        # self.rhx_gis = kwargs.pop('rhx_gis', None) or user_settings.get('rhx_gis')
-        #
-        # cookie_string = kwargs.pop('cookie', None) or user_settings.get('cookie')
+        self.rhx_gis = kwargs.pop('rhx_gis', None) or user_settings.get('rhx_gis')
+
+        self.cookie_string = kwargs.pop('cookie', None) or user_settings.get('cookie')
         # cookie_jar = ClientCookieJar(cookie_string=cookie_string)
         # if cookie_string and cookie_jar.auth_expires and int(time.time()) >= cookie_jar.auth_expires:
         #     raise ClientCookieExpiredError('Cookie expired at {0!s}'.format(cookie_jar.auth_expires))
@@ -186,7 +186,7 @@ class Client(object):
         """Helper property that extracts the settings that you should cache
         in addition to username and password."""
         return {
-            # 'cookie': self.session.cookie_jar.dump(),
+            'cookie': self.cookie_jar.dump(),
             'created_ts': int(time.time()),
             'rhx_gis': self.rhx_gis,
             'user_agent': self.user_agent,
@@ -282,9 +282,15 @@ class Client(object):
                 ['{}: {}'.format(c.key, c.value) for c in self.cookie_jar]
             ))
             self.logger.debug('REQ DATA: {0!s}'.format(data))
+            if method == 'get':
+                res = await self.session.get(url=url, headers=headers, data=data,
+                                             timeout=self.timeout, proxy=self.proxy)
+            else:
+                res = await self.session.post(url=url, headers=headers,
+                                             data=data,
+                                             timeout=self.timeout,
+                                             proxy=self.proxy)
 
-            res = await self.session.get(url=url, headers=headers, data=data,
-                                         timeout=self.timeout, proxy=self.proxy)
 
             self.logger.debug('RESPONSE: {0:d} {1!s}'.format(
                 res.status, res.url
@@ -299,11 +305,19 @@ class Client(object):
                 raise ClientError('Not Found', code=res.status)
             if res.status >= 500:
                 raise ClientError('API Error', code=res.status)
+            if 'https://www.instagram.com/accounts/login/?next=' in str(res._real_url):
+                raise ClientLoginRequiredError('login is required')
+
             response_content = await self._read_response(res)
 
             self.logger.debug('RES BODY: {0!s}'.format(response_content))
 
             if response_content.get('status') == 'fail':
+                if response_content.get('message') == 'checkpoint_required':
+                    raise ClientLoginChallengeRequiredError(
+                        response_content.get('message'),
+                        response_content.get('checkpoint_url'), 403
+                    )
                 raise ClientError(response_content.get('message'), 403)
             return response_content
 
@@ -349,12 +363,17 @@ class Client(object):
 
     async def init(self):
         """Make a GET request to get the first csrf token and rhx_gis"""
-        cookies = {
-            'ig_cb': 1
-        }
+        cookies = None
+        if self.cookie_string:
+            cookie_jar = ClientCookieJar(self.cookie_string)
+        else:
+            cookie_jar = ClientCookieJar()
+            cookies = {'ig_cb': 1}
+
         connector = aiohttp.TCPConnector(verify_ssl=False, limit=self.limit_connector)
         timeout = aiohttp.ClientTimeout(total=self.timeout)
-        self.session = aiohttp.ClientSession(cookies=cookies, connector=connector, timeout=timeout)
+        self.session = aiohttp.ClientSession(connector=connector, timeout=timeout,
+                                             cookie_jar=cookie_jar, cookies=cookies)
         init_res = await self._make_request(
             'https://www.instagram.com/', return_response=True, method='get')
         init_res_content = await self._read_response(init_res, return_json=False)
@@ -373,15 +392,19 @@ class Client(object):
         # required to avoid 403 when doing unauthenticated requests
         self.session.cookie_jar.update_cookies({
             'ig_pr': 1
-
         })
+        if not self.cookie_string and self.username and self.password:
+            await self.login()
+
 
     async def login(self):
         """Login to the web site."""
         if not self.username or not self.password:
             raise ClientError('username/password is blank')
         params = {'username': self.username, 'password': self.password, 'queryParams': '{}'}
-        login_res = self._make_request('https://www.instagram.com/accounts/login/ajax/', params=params)
+        login_res = await self._make_request(
+            'https://www.instagram.com/accounts/login/ajax/', params=params,
+            method='post')
         if not login_res.get('status', '') == 'ok' or not login_res.get('authenticated'):
             raise ClientLoginError('Unable to login')
 
@@ -1104,3 +1127,17 @@ class Client(object):
                  'edge_user_to_photos_of_you', {}).get('edges', [])]
 
         return info
+
+    async def init_challenge_confirm(self, challenge_url):
+        data = {
+            'choice': 1
+        }
+        url = 'https://www.instagram.com' + challenge_url
+        await self._make_request(url=url, params=data, method='post')
+
+    async def send_security_code(self, challenge_url, code):
+        data = {
+            'security_code': code
+        }
+        url = 'https://www.instagram.com' + challenge_url
+        await self._make_request(url=url, params=data, method='post')
