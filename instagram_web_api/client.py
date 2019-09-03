@@ -305,7 +305,7 @@ class Client(object):
                 raise ClientError('Not Found', code=res.status)
             if res.status >= 500:
                 raise ClientError('API Error', code=res.status)
-            if 'https://www.instagram.com/accounts/login/?next=' in str(res._real_url):
+            if 'https://www.instagram.com/accounts/login' in str(res._real_url):
                 raise ClientLoginRequiredError('login is required')
 
             response_content = await self._read_response(res)
