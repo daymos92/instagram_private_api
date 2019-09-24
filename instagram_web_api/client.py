@@ -303,9 +303,11 @@ class Client(object):
 
             if res.status == 404:
                 raise ClientError('Not Found', code=res.status)
-            if res.status >= 500:
+            elif res.status == 429:
+                raise ClientThrottledError('rate limited', res.status)
+            elif res.status >= 500:
                 raise ClientError('API Error', code=res.status)
-            if 'https://www.instagram.com/accounts/login' in str(res._real_url):
+            elif 'https://www.instagram.com/accounts/login/' == str(res._real_url):
                 raise ClientLoginRequiredError('login is required')
 
             response_content = await self._read_response(res)
@@ -323,11 +325,11 @@ class Client(object):
 
         except aiohttp.ClientResponseError as e:
             msg = 'HTTPError "{0!s}" while opening {1!s}'.format(e.message, url)
-            if e.status == 400:
+            if res.status == 400:
                 raise ClientBadRequestError(msg, e.status)
-            elif e.status == 403:
+            elif res.status == 403:
                 raise ClientForbiddenError(msg, e.status)
-            elif e.status == 429:
+            elif res.status == 429:
                 raise ClientThrottledError(msg, e.status)
             raise ClientError(msg, e.status)
 
@@ -447,6 +449,8 @@ class Client(object):
 
         if self.auto_patch:
             ClientCompatPatch.user(info['graphql']['user'], drop_incompat_keys=self.drop_incompat_keys)
+        if not info:
+            raise ClientError('API Error')
         return info['graphql']['user']
 
     async def user_feed(self, user_id, **kwargs):

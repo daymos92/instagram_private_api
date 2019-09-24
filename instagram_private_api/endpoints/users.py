@@ -21,13 +21,13 @@ class UsersEndpointsMixin(object):
             ClientCompatPatch.user(res['user'], drop_incompat_keys=self.drop_incompat_keys)
         return res
 
-    def username_info(self, user_name):
+    async def username_info(self, user_name):
         """
         Get user info for a specified user name
         :param user_name:
         :return:
         """
-        res = self._call_api('users/{user_name!s}/usernameinfo/'.format(**{'user_name': user_name}))
+        res = await self._call_api('users/{user_name!s}/usernameinfo/'.format(**{'user_name': user_name}))
         if self.auto_patch:
             ClientCompatPatch.user(res['user'], drop_incompat_keys=self.drop_incompat_keys)
         return res

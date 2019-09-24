@@ -545,12 +545,15 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
             self.logger.debug('REQUEST: {0!s} {1!s}'.format(url, 'GET'))
             self.logger.debug('DATA: {0!s}'.format(data))
             # response = self.opener.open(req, timeout=self.timeout)
-            if query:
-                response = await self.session.get(url=url, headers=headers,
-                                                  timeout=self.timeout, proxy=self.proxy)
+            if params:
+                response = await self.session.post(url=url, headers=headers,
+                                                   data=data,
+                                                   timeout=self.timeout,
+                                                   proxy=self.proxy)
             else:
-                response = await self.session.post(url=url, headers=headers, data=data,
-                                                   timeout=self.timeout, proxy=self.proxy)
+                response = await self.session.get(url=url, headers=headers,
+                                                  timeout=self.timeout,
+                                                  proxy=self.proxy)
         except aiohttp.ClientResponseError as e:
             raise ClientError(e.message, code=e.status)
             # error_response = await self._read_response(e)

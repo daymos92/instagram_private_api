@@ -64,7 +64,7 @@ class FeedEndpointsMixin(object):
              for m in res.get('items', [])]
         return res
 
-    def user_feed(self, user_id, **kwargs):
+    async def user_feed(self, user_id, **kwargs):
         """
         Get the feed for the specified user id
 
@@ -75,7 +75,7 @@ class FeedEndpointsMixin(object):
         :return:
         """
         endpoint = 'feed/user/{user_id!s}/'.format(**{'user_id': user_id})
-        res = self._call_api(endpoint, query=kwargs)
+        res = await self._call_api(endpoint, query=kwargs)
 
         if self.auto_patch:
             [ClientCompatPatch.media(m, drop_incompat_keys=self.drop_incompat_keys)
