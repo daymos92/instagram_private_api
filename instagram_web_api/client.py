@@ -309,7 +309,8 @@ class Client(object):
                 raise ClientError('API Error', code=res.status)
             elif 'https://www.instagram.com/accounts/login/' == str(res._real_url):
                 raise ClientLoginRequiredError('login is required')
-
+            elif 'https://www.instagram.com/challenge/' in str(res._real_url):
+                raise ClientLoginChallengeRequiredError('challenge_required', None)
             response_content = await self._read_response(res)
 
             self.logger.debug('RES BODY: {0!s}'.format(response_content))
