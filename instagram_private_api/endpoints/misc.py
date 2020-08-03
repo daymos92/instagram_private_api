@@ -57,34 +57,46 @@ class MiscEndpointsMixin(object):
         params.update(kwargs)
         return self._call_api('megaphone/log/', params=params, unsigned=True)
 
-    def ranked_recipients(self):
+    async def ranked_recipients(self):
         """Get ranked recipients"""
-        res = self._call_api('direct_v2/ranked_recipients/', query={'show_threads': 'true'})
+        res = await self._call_api('direct_v2/ranked_recipients/', query={'show_threads': 'true'})
         return res
 
-    def recent_recipients(self):
+    async def recent_recipients(self):
         """Get recent recipients"""
-        res = self._call_api('direct_share/recent_recipients/')
+        res = await self._call_api('direct_share/recent_recipients/')
         return res
 
-    def news(self):
+    async def news(self):
         """
         Get news feed of accounts the logged in account is following.
         This returns the items in the 'Following' tab.
         """
-        return self._call_api('news/')
+        return await self._call_api('news/')
 
-    def news_inbox(self):
+    async def news_inbox(self):
         """
         Get inbox feed of activity related to the logged in account.
         This returns the items in the 'You' tab.
         """
-        return self._call_api(
+        return await self._call_api(
             'news/inbox/', query={'limited_activity': 'true', 'show_su': 'true'})
 
-    def direct_v2_inbox(self):
+    async def direct_v2_inbox(self, cursor=None):
         """Get v2 inbox"""
-        return self._call_api('direct_v2/inbox/')
+
+        params = {'persistentBadging': 'true', 'use_unified_inbox': 'true'}
+        if cursor:
+            params['cursor'] = cursor
+        return await self._call_api('direct_v2/inbox/', query=params)
+
+    async def get_pending_inbox(self, cursor=None):
+        """Get v2 inbox"""
+
+        params = {'persistentBadging': 'true', 'use_unified_inbox': 'true'}
+        if cursor:
+            params['cursor'] = cursor
+        return await self._call_api('direct_v2/pending_inbox/', query=params)
 
     def oembed(self, url, **kwargs):
         """

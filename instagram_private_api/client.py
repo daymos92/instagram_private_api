@@ -29,7 +29,7 @@ from .compat import (
 from .errors import (
     ErrorHandler, ClientError,
     ClientLoginRequiredError, ClientCookieExpiredError,
-    ClientConnectionError
+    ClientConnectionError, ClientLoginChallengeRequiredError
 )
 try:  # Python 3:
     # Not a no-op, we're adding this to the namespace so it can be imported.
@@ -579,6 +579,11 @@ class Client(AccountsEndpointsMixin, DiscoverEndpointsMixin, FeedEndpointsMixin,
             raise ClientLoginRequiredError(
                 json_response.get('message'), code=response.status,
                 error_response=json.dumps(json_response))
+
+        if json_response.get('message') == 'challenge_required':
+            raise ClientLoginChallengeRequiredError(
+                msg=json_response.get('message'),
+                challenge_url=json_response['challenge']['url'])
 
         # not from oembed or an ok response
         if not json_response.get('provider_url') and json_response.get('status', '') != 'ok':

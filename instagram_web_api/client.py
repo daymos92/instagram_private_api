@@ -307,7 +307,7 @@ class Client(object):
                 raise ClientThrottledError('rate limited', res.status)
             elif res.status >= 500:
                 raise ClientError('API Error', code=res.status)
-            elif 'https://www.instagram.com/accounts/login/' == str(res._real_url):
+            elif 'https://www.instagram.com/accounts/login/' in str(res._real_url):
                 raise ClientLoginRequiredError('login is required')
             elif 'https://www.instagram.com/challenge/' in str(res._real_url):
                 raise ClientLoginChallengeRequiredError('challenge_required', None)
@@ -325,6 +325,8 @@ class Client(object):
             return response_content
 
         except aiohttp.ClientResponseError as e:
+            if e.code // 100 == 5:
+                raise ClientError(e.message, code=e.code)
             msg = 'HTTPError "{0!s}" while opening {1!s}'.format(e.message, url)
             if res.status == 400:
                 raise ClientBadRequestError(msg, e.status)
@@ -550,7 +552,7 @@ class Client(object):
             'Referer': 'https://www.instagram.com',
             'x-requested-with': 'XMLHttpRequest',
         }
-        info = self._make_request(
+        info = await self._make_request(
             'https://www.instagram.com/p/{0!s}/'.format(short_code),
             query={'__a': '1', '__b': '1'},
             headers=headers)
